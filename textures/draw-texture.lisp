@@ -206,12 +206,122 @@
                :flip-uvs-vertically flip-uvs-vertically
                :color-scale color-scale))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; TMP
+(defun-g draw-texture-array-vert ((vert g-pt) &uniform (transform :mat4) (uv-y-mult :float))
+  (values (* transform (v! (pos vert) 1s0))
+          (* (tex vert) (v! 1 uv-y-mult))))
+(defun-g draw-texture-array-frag ((tc :vec2) &uniform (tex :sampler-2d-array) (color-scale :vec4) (index :int))
+  (* (texture tex (v! tc index)) color-scale))
+(defpipeline-g draw-texture-array-pipeline ()
+  #'(draw-texture-array-vert g-pt) #'(draw-texture-array-frag :vec2))
+;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defun-g draw-cube-array-face-frag ((tc :vec2) &uniform (tex :sampler-cube-array)
+                                    (mat :mat3) (color-scale :vec4) (index :int))
+  (* (texture tex (v! (* mat (v! tc -1)) index))
+     color-scale))
+(defpipeline-g draw-cube-array-face-pipeline ()
+  #'(draw-cube-face-vert g-pt) #'(draw-cube-array-face-frag :vec2))
+
+;;------------------------------------------------------------
+
+(defun %draw-cube-array-face (sampler pos-vec2 rotation scale color-scale index)
+  (let* ((tex (sampler-texture sampler))
+         (tex-res (resolution tex))
+         (win-res (resolution (current-viewport)))
+         (rect-res (rotated-rect-size (v2:* tex-res (v! 3 4)) rotation))
+         (fit-scale (* (get-fit-to-rect-scale win-res rect-res) 2))
+         (quad (nineveh.internals:get-gpu-quad)))
+    (labels ((calc-trans (pos)
+               (m4:*
+                (m4:translation (v! pos-vec2 0))
+                (m4:scale (v3:*s (v! (/ 1 (x win-res))
+                                     (/ 1 (y win-res))
+                                     0)
+                                 (* scale fit-scale)))
+                (m4:rotation-z rotation)
+                (m4:scale (v! tex-res 0))
+                (m4:translation pos))))
+      (map-g #'draw-cube-array-face-pipeline quad
+             :index index
+             :mat (m3:rotation-x (radians 90))
+             :tex sampler
+             :uv-mult (v! 1 -1)
+             :transform (calc-trans (v! 0 1.5 0))
+             :color-scale color-scale)
+      (map-g #'draw-cube-array-face-pipeline quad
+             :index index
+             :mat (m3:rotation-y (radians 90))
+             :tex sampler
+             :uv-mult (v! -1 1)
+             :transform (calc-trans (v! -1 0.5 0))
+             :color-scale color-scale)
+      (map-g #'draw-cube-array-face-pipeline quad
+             :index index
+             :mat (m3:rotation-y (radians -90))
+             :tex sampler
+             :uv-mult (v! -1 1)
+             :transform (calc-trans (v! 1 0.5 0))
+             :color-scale color-scale)
+      (map-g #'draw-cube-array-face-pipeline quad
+             :index index
+             :mat (m3:rotation-x (radians 180))
+             :tex sampler
+             :uv-mult (v! 1 -1)
+             :transform (calc-trans (v! 0 0.5 0))
+             :color-scale color-scale)
+      (map-g #'draw-cube-array-face-pipeline quad
+             :index index
+             :mat (m3:rotation-x (radians -90))
+             :tex sampler
+             :uv-mult (v! 1 -1)
+             :transform (calc-trans (v! 0 -0.5 0))
+             :color-scale color-scale)
+      (map-g #'draw-cube-array-face-pipeline quad
+             :index index
+             :mat (m3:rotation-x (radians 0))
+             :tex sampler
+             :uv-mult (v! 1 -1)
+             :transform (calc-trans (v! 0 -1.5 0))
+             :color-scale color-scale))))
+
+(defun %draw-sampler-array (sampler pos-vec2 rotation scale flip-uvs-vertically
+                            color-scale index)
+  (let* ((tex (sampler-texture sampler))
+         (tex-res (resolution tex))
+         (win-res (resolution (current-viewport)))
+         (rect-res (rotated-rect-size tex-res rotation))
+         (fit-scale (* (get-fit-to-rect-scale win-res rect-res) 2))
+         (transform
+           (m4:*
+            (m4:translation (v! pos-vec2 0))
+            (m4:scale (v3:*s (v! (/ 1 (x win-res))
+                                 (/ 1 (y win-res))
+                                 0)
+                             (float scale)))
+            (m4:rotation-z rotation)
+            (m4:scale (v3:*s (v! tex-res 0) fit-scale)))))
+    (map-g #'draw-texture-array-pipeline (nineveh.internals:get-gpu-quad)
+           :index index
+           :tex sampler
+           :transform transform
+           :uv-y-mult (if flip-uvs-vertically -1s0 1s0) ;; this is a bug as it samples outside of texture
+           :color-scale color-scale)))
+
 (defmethod draw-tex-br ((sampler sampler)
                         &key (flip-uvs-vertically nil)
-                          (color-scale (v! 1 1 1 1)))
-  (if (eq (sampler-type sampler) :sampler-cube)
-      (%draw-cube-face sampler (v! 0.5 -0.5) 1.5707 0.5 color-scale)
-      (%draw-sampler sampler (v! 0.5 -0.5) 0s0 0.5 flip-uvs-vertically color-scale)))
+                          (color-scale (v! 1 1 1 1))
+                          (index 0))
+  (case (sampler-type sampler)
+    (:sampler-cube
+     (%draw-cube-face sampler (v! 0.5 -0.5) 1.5707 0.5 color-scale))
+    (:sampler-2d-array
+     (%draw-sampler-array sampler (v! 0.5 -0.5) 0s0 0.5 flip-uvs-vertically color-scale index))
+    (:sampler-cube-array
+     (%draw-cube-array-face sampler (v! 0.5 -0.5) 1.5707 0.5 color-scale index))
+    (t
+     (%draw-sampler sampler (v! 0.5 -0.5) 0s0 0.5 flip-uvs-vertically color-scale))))
 
 ;;------------------------------------------------------------
 
