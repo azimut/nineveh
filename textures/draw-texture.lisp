@@ -176,10 +176,17 @@
 
 (defmethod draw-tex-bl ((sampler sampler)
                         &key (flip-uvs-vertically nil)
-                          (color-scale (v! 1 1 1 1)))
-  (if (eq (sampler-type sampler) :sampler-cube)
-      (%draw-cube-face sampler (v! -0.5 -0.5) 1.5707 0.5 color-scale)
-      (%draw-sampler sampler (v! -0.5 -0.5) 0s0 0.5 flip-uvs-vertically color-scale)))
+                          (color-scale (v! 1 1 1 1))
+                          (index 0))
+  (case (sampler-type sampler)
+    (:sampler-cube
+     (%draw-cube-face sampler (v! -0.5 -0.5) 1.5707 0.5 color-scale))
+    (:sampler-2d-array
+     (%draw-sampler-array sampler (v! -0.5 -0.5) 0s0 0.5 flip-uvs-vertically color-scale index))
+    (:sampler-cube-array
+     (%draw-cube-array-face sampler (v! -0.5 -0.5) 1.5707 0.5 color-scale index))
+    (t
+     (%draw-sampler sampler (v! -0.5 -0.5) 0s0 0.5 flip-uvs-vertically color-scale))))
 
 ;;------------------------------------------------------------
 
